@@ -285,4 +285,5 @@ namespace AutoCollectorMod
         public bool EnableForBarns { get; set; } = true;
         public bool IncludePigs { get; set; } = false;  // For future implementation
     }
+
 }

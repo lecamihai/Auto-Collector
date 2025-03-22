@@ -13,11 +13,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "C:\\Users\\Brn\\Auto-Collector\\AutoCollector.csproj",
+      "projectUniqueName": "C:\\Users\\Brn\\Mods\\Stardew\\Auto-Collector-Stardew\\AutoCollector.csproj",
       "projectName": "AutoCollector",
-      "projectPath": "C:\\Users\\Brn\\Auto-Collector\\AutoCollector.csproj",
+      "projectPath": "C:\\Users\\Brn\\Mods\\Stardew\\Auto-Collector-Stardew\\AutoCollector.csproj",
       "packagesPath": "C:\\Users\\Brn\\.nuget\\packages\\",
-      "outputPath": "C:\\Users\\Brn\\Auto-Collector\\obj\\",
+      "outputPath": "C:\\Users\\Brn\\Mods\\Stardew\\Auto-Collector-Stardew\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "C:\\Users\\Brn\\AppData\\Roaming\\NuGet\\NuGet.Config"

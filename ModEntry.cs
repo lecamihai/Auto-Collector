@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
-using System.Security.Cryptography.X509Certificates;
 using HarmonyLib;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
 using StardewValley.Buildings;
 using StardewValley.Objects;
+using StardewValley.GameData.FarmAnimals;
 
 namespace AutoCollectorMod
 {
@@ -22,7 +22,7 @@ namespace AutoCollectorMod
             ModMonitor = Monitor;
 
             harmony = new Harmony(ModManifest.UniqueID);
-            // Patch AnimalHouse instead of Building
+            
             harmony.Patch(
                 original: AccessTools.Method(typeof(AnimalHouse), nameof(AnimalHouse.DayUpdate)),
                 postfix: new HarmonyMethod(typeof(ModEntry), nameof(After_AnimalHouseDayUpdate))
@@ -41,59 +41,153 @@ namespace AutoCollectorMod
                     return;
 
                 string buildingType = building.buildingType.Value;
-                bool isBarn = buildingType.Contains("Barn");
                 bool isCoop = buildingType.Contains("Coop");
+                bool isBarn = buildingType.Contains("Barn");
 
-                if (!(isBarn || (Config.EnableForCoops && isCoop)))
+                if (!isCoop && !isBarn)
+                    return;
+
+                if ((isCoop && !Config.EnableForCoops) || (isBarn && !Config.EnableForBarns))
                     return;
 
                 List<Chest> chests = FindChestsInBuilding(__instance);
                 if (chests.Count == 0)
                     return;
 
-                List<Vector2> toRemove = new List<Vector2>();
-                foreach (var pair in __instance.objects.Pairs)
+                // Handle animal products differently for barns
+                if (isBarn)
                 {
-                    if (IsCollectibleItem(pair.Value))
-                    {
-                        StardewValley.Object item = (StardewValley.Object)pair.Value;
-                        foreach (Chest chest in chests)
-                        { 
-                            if (TryTransferToChest(pair.Value, chest))
-                            {
-                                // Generate HUD message with "Collected" prefix
-                                string messageText = $"Collected {item.DisplayName}";
-                                if (item.Stack > 1)
-                                    messageText += $" x{item.Stack}";
-
-                                HUDMessage msg = HUDMessage.ForItemGained(item, item.Stack);
-                                msg.message = $"Collected {item.DisplayName}";
-                                if (item.Stack > 1)
-                                    msg.message += $" x{item.Stack}";
-
-                                Game1.addHUDMessage(msg);
-
-                                toRemove.Add(pair.Key);
-                                break;
-                            }
-                        }
-                    }
+                    ProcessBarnAnimals(__instance, chests);
                 }
-
-                foreach (Vector2 tile in toRemove)
+                else
                 {
-                    __instance.objects.Remove(tile);
-                }
-
-                if (toRemove.Count > 0)
-                {
-                    ModMonitor.Log($"Auto-collected {toRemove.Count} items in {buildingType}", LogLevel.Info);
+                    ProcessCoopItems(__instance, chests);
                 }
             }
             catch (Exception ex)
             {
                 ModMonitor.Log($"Error in auto-collection: {ex}", LogLevel.Error);
             }
+        }
+
+        private static void ProcessBarnAnimals(AnimalHouse animalHouse, List<Chest> chests)
+        {
+            int collectedCount = 0;
+            
+            foreach (FarmAnimal animal in animalHouse.animals.Values)
+            {
+                try
+                {
+                    FarmAnimalData animalData = animal.GetAnimalData();
+                    if (animal.currentProduce.Value == null || animal.age.Value <= animalData.DaysToMature)
+                        continue;
+
+                    // Get the actual product item
+                    Item item = GetAnimalProduct(animal);
+                    if (item == null)
+                        continue;
+
+                    // Try to transfer to chests
+                    foreach (Chest chest in chests)
+                    {
+                        if (TryTransferToChest(item, chest))
+                        {
+                            // Show HUD message
+                            HUDMessage msg = HUDMessage.ForItemGained(item, item.Stack);
+                            msg.message = $"Collected {item.DisplayName}";
+                            if (item.Stack > 1)
+                                msg.message += $" x{item.Stack}";
+                            Game1.addHUDMessage(msg);
+
+                            // Clear animal's produce
+                            animal.currentProduce.Value = null;
+                            animal.daysSinceLastLay.Value = 0;
+                            collectedCount++;
+                            break;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    ModMonitor.Log($"Error processing {animal.displayName}: {ex}", LogLevel.Error);
+                }
+            }
+
+            if (collectedCount > 0)
+            {
+                ModMonitor.Log($"Auto-collected {collectedCount} animal products from barn", LogLevel.Info);
+            }
+        }
+
+        private static void ProcessCoopItems(AnimalHouse animalHouse, List<Chest> chests)
+        {
+            List<Vector2> toRemove = new List<Vector2>();
+            int collectedCount = 0;
+
+            foreach (var pair in animalHouse.objects.Pairs)
+            {
+                if (IsCollectibleItem(pair.Value, isCoop: true, isBarn: false))
+                {
+                    StardewValley.Object item = (StardewValley.Object)pair.Value;
+                    foreach (Chest chest in chests)
+                    {
+                        if (TryTransferToChest(item, chest))
+                        {
+                            // Show HUD message
+                            HUDMessage msg = HUDMessage.ForItemGained(item, item.Stack);
+                            msg.message = $"Collected {item.DisplayName}";
+                            if (item.Stack > 1)
+                                msg.message += $" x{item.Stack}";
+                            Game1.addHUDMessage(msg);
+
+                            toRemove.Add(pair.Key);
+                            collectedCount++;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Remove collected items from the ground
+            foreach (Vector2 tile in toRemove)
+            {
+                animalHouse.objects.Remove(tile);
+            }
+
+            if (collectedCount > 0)
+            {
+                ModMonitor.Log($"Auto-collected {collectedCount} items from coop", LogLevel.Info);
+            }
+        }
+
+        private static Item GetAnimalProduct(FarmAnimal animal)
+        {
+            if (animal.currentProduce.Value == null)
+                return null;
+
+            // Get base product
+            Item item = ItemRegistry.Create(animal.currentProduce.Value);
+            
+            // Handle quality
+            if (item is StardewValley.Object obj)
+            {
+                obj.Quality = animal.produceQuality.Value switch
+                {
+                    1 => StardewValley.Object.medQuality,
+                    2 => StardewValley.Object.highQuality,
+                    4 => StardewValley.Object.bestQuality,
+                    _ => StardewValley.Object.lowQuality
+                };
+            }
+
+            // Handle special cases
+            if (animal.hasEatenAnimalCracker.Value)
+            {
+                item.Stack *= 2;
+                animal.hasEatenAnimalCracker.Value = false;
+            }
+
+            return item;
         }
 
         private static Building GetParentBuilding(AnimalHouse animalHouse)
@@ -121,60 +215,61 @@ namespace AutoCollectorMod
             return foundChests;
         }
 
-        private static bool IsCollectibleItem(Item item)
+        private static bool IsCollectibleItem(Item item, bool isCoop, bool isBarn)
         {
-            if (item is not StardewValley.Object obj) 
+            if (item is not StardewValley.Object obj)
                 return false;
 
-            // Expanded list of animal products
-            return obj.Type == "Animal" || 
-                   obj.Category == -5 ||
-                   obj.ParentSheetIndex is 176 or 174 or 182 or 180 or 305 or 928 or 442 or 444 or 107 or 446 or 430;
-            /*
-            COOP
-            Chicken
-            176 = White Egg
-            174 = Large White Egg
-            182 = Large Brown Egg
-            180 = Brown Egg
-            305 = Void Egg
-            928 = Golden Egg
-            Duck
-            442 = Duck Egg
-            444 = Duck Feather
-            Dino
-            107 = Dinosaur Egg
-            Rabbit
-            446 = Rabbits Foot
+            // Coop products
+            if (isCoop)
+            {
+                return obj.ParentSheetIndex is 
+                    176 or 174 or  // Chicken eggs
+                    182 or 180 or  // Brown eggs
+                    305 or         // Void Egg
+                    928 or         // Golden Egg
+                    442 or         // Duck Egg
+                    444 or         // Duck Feather
+                    107 or         // Dinosaur Egg
+                    446;           // Rabbit's Foot
+            }
 
-            BARN
-            438 = Large Goat Milk
-            440 = Wool
-            430 = Truffles
-            */
+            // Barn products
+            if (isBarn)
+            {
+                return obj.ParentSheetIndex is 
+                    184 or 186 or  // Cow Milk
+                    436 or 438 or  // Goat Milk
+                    440 or         // Wool
+                    289;           // Ostrich Egg
+            }
+
+            return false;
         }
 
         private static bool TryTransferToChest(Item item, Chest chest)
         {
             try
             {
-                // Handle full chest
-                if (chest.Items.Count >= 36) 
+                if (chest.Items.Count >= Chest.capacity)
                     return false;
 
-                // Handle stackable items
+                // Clone the item to prevent reference issues
+                Item clonedItem = item.getOne();
+                clonedItem.Stack = item.Stack;
+
+                // Try stacking first
                 foreach (Item chestItem in chest.Items)
                 {
-                    if (chestItem?.canStackWith(item) == true)
+                    if (chestItem?.canStackWith(clonedItem) == true)
                     {
-                        chestItem.Stack += item.Stack;
+                        chestItem.Stack += clonedItem.Stack;
                         return true;
                     }
                 }
 
-                // Add new item
-                chest.Items.Add(item);
-                return true;
+                // Add as new item
+                return chest.addItem(clonedItem) == null;
             }
             catch
             {
@@ -187,5 +282,7 @@ namespace AutoCollectorMod
     {
         public bool Enabled { get; set; } = true;
         public bool EnableForCoops { get; set; } = true;
+        public bool EnableForBarns { get; set; } = true;
+        public bool IncludePigs { get; set; } = false;  // For future implementation
     }
 }

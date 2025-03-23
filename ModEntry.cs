@@ -31,42 +31,35 @@ namespace AutoCollectorMod
 
         private static void After_AnimalHouseDayUpdate(AnimalHouse __instance, int dayOfMonth)
         {
-            try
+            if (!Config.Enabled)
+                return;
+
+            Building building = GetParentBuilding(__instance);
+            if (building == null)
+                return;
+
+            string buildingType = building.buildingType.Value;
+            bool isCoop = buildingType.Contains("Coop");
+            bool isBarn = buildingType.Contains("Barn");
+
+            if (!isCoop && !isBarn)
+                return;
+
+            if ((isCoop && !Config.EnableForCoops) || (isBarn && !Config.EnableForBarns))
+                return;
+
+            List<Chest> chests = FindChestsInBuilding(__instance);
+            if (chests.Count == 0)
+                return;
+
+            // Handle animal products differently for barns
+            if (isBarn)
             {
-                if (!Config.Enabled)
-                    return;
-
-                Building building = GetParentBuilding(__instance);
-                if (building == null)
-                    return;
-
-                string buildingType = building.buildingType.Value;
-                bool isCoop = buildingType.Contains("Coop");
-                bool isBarn = buildingType.Contains("Barn");
-
-                if (!isCoop && !isBarn)
-                    return;
-
-                if ((isCoop && !Config.EnableForCoops) || (isBarn && !Config.EnableForBarns))
-                    return;
-
-                List<Chest> chests = FindChestsInBuilding(__instance);
-                if (chests.Count == 0)
-                    return;
-
-                // Handle animal products differently for barns
-                if (isBarn)
-                {
-                    ProcessBarnAnimals(__instance, chests);
-                }
-                else
-                {
-                    ProcessCoopItems(__instance, chests);
-                }
+                ProcessBarnAnimals(__instance, chests);
             }
-            catch (Exception ex)
+            else
             {
-                ModMonitor.Log($"Error in auto-collection: {ex}", LogLevel.Error);
+                ProcessCoopItems(__instance, chests);
             }
         }
 
@@ -76,46 +69,39 @@ namespace AutoCollectorMod
             
             foreach (FarmAnimal animal in animalHouse.animals.Values)
             {
-                try
+                FarmAnimalData animalData = animal.GetAnimalData();
+                if (animal.currentProduce.Value == null || animal.age.Value <= animalData.DaysToMature)
+                    continue;
+
+                // Get the actual product item
+                Item item = GetAnimalProduct(animal);
+                if (item == null)
+                    continue;
+
+                // Try to transfer to chests
+                foreach (Chest chest in chests)
                 {
-                    FarmAnimalData animalData = animal.GetAnimalData();
-                    if (animal.currentProduce.Value == null || animal.age.Value <= animalData.DaysToMature)
-                        continue;
-
-                    // Get the actual product item
-                    Item item = GetAnimalProduct(animal);
-                    if (item == null)
-                        continue;
-
-                    // Try to transfer to chests
-                    foreach (Chest chest in chests)
+                    if (TryTransferToChest(item, chest))
                     {
-                        if (TryTransferToChest(item, chest))
-                        {
-                            // Show HUD message
-                            HUDMessage msg = HUDMessage.ForItemGained(item, item.Stack);
-                            msg.message = $"Collected {item.DisplayName}";
-                            if (item.Stack > 1)
-                                msg.message += $" x{item.Stack}";
-                            Game1.addHUDMessage(msg);
+                        // Show HUD message
+                        HUDMessage msg = HUDMessage.ForItemGained(item, item.Stack);
+                        msg.message = $"Collected {item.DisplayName}";
+                        if (item.Stack > 1)
+                            msg.message += $" x{item.Stack}";
+                        Game1.addHUDMessage(msg);
 
-                            // Clear animal's produce
-                            animal.currentProduce.Value = null;
-                            animal.daysSinceLastLay.Value = 0;
-                            collectedCount++;
-                            break;
-                        }
+                        // Clear animal's produce
+                        animal.currentProduce.Value = null;
+                        animal.daysSinceLastLay.Value = 0;
+                        collectedCount++;
+                        break;
                     }
-                }
-                catch (Exception ex)
-                {
-                    ModMonitor.Log($"Error processing {animal.displayName}: {ex}", LogLevel.Error);
                 }
             }
 
             if (collectedCount > 0)
             {
-                ModMonitor.Log($"Auto-collected {collectedCount} animal products from barn", LogLevel.Info);
+                //ModMonitor.Log($"Auto-collected {collectedCount} animal products from barn", LogLevel.Info);
             }
         }
 
@@ -156,7 +142,7 @@ namespace AutoCollectorMod
 
             if (collectedCount > 0)
             {
-                ModMonitor.Log($"Auto-collected {collectedCount} items from coop", LogLevel.Info);
+                //ModMonitor.Log($"Auto-collected {collectedCount} items from coop", LogLevel.Info);
             }
         }
 
@@ -283,7 +269,7 @@ namespace AutoCollectorMod
         public bool Enabled { get; set; } = true;
         public bool EnableForCoops { get; set; } = true;
         public bool EnableForBarns { get; set; } = true;
-        public bool IncludePigs { get; set; } = false;  // For future implementation
+    
     }
 
 }
